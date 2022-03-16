@@ -17,7 +17,7 @@ namespace flint
 			Interface(Engine& engine);
 			~Interface();
 
-			bool initialize(const char* main);
+			bool initialize(const wchar_t* main);
 			void load();
 			bool update(float delta);
 			bool beforeUnload();

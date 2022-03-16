@@ -4,6 +4,7 @@
 #include "include/v8-fast-api-calls.h"
 #include <cstdio>
 #include <map>
+#include <stack>
 #include <functional>
 #include "Engine.hpp"
 #include "Types.hpp"
@@ -16,22 +17,25 @@ namespace flint
 {
 	namespace javascript
 	{
-        struct Test
-        {
-            Test(int ac) : a(ac) {}
-            int a;
-        };
-
-	    class Environment
+       
+        class Environment
 		{
 			friend class Interface;
                 
             static wchar_t* toWideChar(const char* utf8)
             {
                 const int len = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, NULL, 0);
-                wchar_t* wstr = (wchar_t*)malloc(sizeof(wchar_t)*len);
+                wchar_t* wstr = new wchar_t [len];
                 MultiByteToWideChar(CP_UTF8, 0, utf8, -1, wstr, len);
                 return wstr;
+            }
+
+            static char* toUTF8(const wchar_t* utf8)
+            {
+                const int len = WideCharToMultiByte(CP_UTF8, 0, utf8, -1, NULL, 0, 0, 0);
+                char* str = new char [len];
+                WideCharToMultiByte(CP_UTF8, 0, utf8, -1, str, len, 0, 0);
+                return str;
             }
 
             Environment(Engine& engine) : m_engine(engine), m_pRenderer(nullptr)
@@ -43,6 +47,7 @@ namespace flint
                 m_pPlatform = v8::platform::NewDefaultPlatform();
                 v8::V8::InitializePlatform(m_pPlatform.get());
                 v8::V8::Initialize();
+                m_currPath.push(platform::getCWD());
                 m_createParams.array_buffer_allocator = v8::ArrayBuffer::Allocator::NewDefaultAllocator();
                 m_pIsolate = v8::Isolate::New(m_createParams);
                 m_pIsolate->SetData(0, this);
@@ -80,10 +85,10 @@ namespace flint
 				delete m_createParams.array_buffer_allocator;
 			}
 
-            v8::MaybeLocal<v8::String> readFile(const char* name)
+            v8::MaybeLocal<v8::String> readFile(const wchar_t* name)
             {
                 FILE* file = nullptr;
-                fopen_s(&file, name, "rb");
+                _wfopen_s(&file, name, L"rb");
                 if (file == NULL)
                     return v8::MaybeLocal<v8::String>();
 
@@ -158,7 +163,10 @@ namespace flint
                     }
                 }
                 else
-                    return m_pEnvironment->load(path.c_str());
+                {
+                    std::unique_ptr<wchar_t> wpath(toWideChar(path.c_str()));
+                    return m_pEnvironment->load(wpath.get());
+                }
             };
 
             void execute(const char* code)
@@ -175,24 +183,32 @@ namespace flint
                     int k = 0;
             }
 
-            v8::MaybeLocal<v8::Module> load(const char* moduleName, const char* code = 0)
+            v8::MaybeLocal<v8::Module> load(const wchar_t* moduleName, const char* code = 0)
             {
                 v8::EscapableHandleScope handle_scope(m_pIsolate);
                 v8::TryCatch try_catch(m_pIsolate);
                 v8::Local<v8::String> source;
+                std::wstring moduleNameFull;
+                std::wstring modulePathFull;
                 bool bLoaded = true;
                 if (code)
                     v8::String::NewFromUtf8(m_pIsolate, code).ToLocal(&source);
-                else if(0 == _strcmpi(moduleName, "flint"))
+                else if(0 == _wcsicmp(moduleName, L"flint"))
                     v8::String::NewFromUtf8(m_pIsolate, FlintModule).ToLocal(&source);
                 else
                 {
-                    v8::MaybeLocal<v8::String> code = readFile(moduleName);
+                    modulePathFull = m_currPath.top();
+                    modulePathFull.push_back('\\');
+                    modulePathFull += moduleName;
+                    modulePathFull = platform::getFullPath(modulePathFull.c_str());
+                    moduleNameFull = modulePathFull + L"\\" + platform::getFileName(moduleName);
+                    v8::MaybeLocal<v8::String> code = readFile(moduleNameFull.c_str());
                     bLoaded = code.ToLocal(&source);
                 }
                 if (bLoaded)
                 {
-                    v8::Local<v8::String> name = v8::String::NewFromUtf8(m_pIsolate, moduleName).ToLocalChecked();
+                    std::unique_ptr<char> filename(toUTF8(moduleNameFull.c_str()));
+                    v8::Local<v8::String> name = v8::String::NewFromUtf8(m_pIsolate, filename.get()).ToLocalChecked();
                     v8::ScriptOrigin origin(m_pIsolate, name, 0, 0, false, -1, v8::Local<v8::Value>(), false, false, true);
                     v8::Local<v8::Context> context = m_context.Get(m_pIsolate);
                     v8::Local<v8::Module> module;
@@ -201,14 +217,17 @@ namespace flint
                         reportException(&try_catch);
                     else
                     {
-                        auto itr = Modules.insert(std::make_pair(moduleName, v8::Eternal<v8::Module>(m_pIsolate, module))).first;
+                        auto itr = Modules.insert(std::make_pair(filename.get(), v8::Eternal<v8::Module>(m_pIsolate, module))).first;
+                        m_currPath.push(modulePathFull);
                         if (module->InstantiateModule(context, resolveModules).IsNothing())
                         {
                             Modules.erase(itr);
+                            m_currPath.pop();
                             reportException(&try_catch);
                         }
                         else
                         {
+                            m_currPath.pop();
                             v8::Local<v8::Promise> promise = module->Evaluate(context).ToLocalChecked().As<v8::Promise>();
                             if (v8::Module::kEvaluated == module->GetStatus() && promise->State() == v8::Promise::kFulfilled)
                             {
@@ -315,9 +334,8 @@ namespace flint
                     if (params->GetRealNamedProperty(context, v8::String::NewFromUtf8Literal(pIsolate, "title")).ToLocal(&value))
                     {
                         v8::String::Utf8Value val(pIsolate, value->ToString(context).ToLocalChecked());
-                        wchar_t* str = toWideChar(*val);
-                        engineParams.title = str;
-                        free(str);
+                        std::unique_ptr<wchar_t> str(toWideChar(*val));
+                        engineParams.title = str.get();
                     }
                     if (params->GetRealNamedProperty(context, v8::String::NewFromUtf8Literal(pIsolate, "state")).ToLocal(&value))
                     {
@@ -347,9 +365,8 @@ namespace flint
                 case 0:
                 {
                     v8::String::Utf8Value value(pIsolate, args[1]->ToString(context).ToLocalChecked());
-                    wchar_t* str = toWideChar(*value);
-                    engine.setTitle(str);
-                    free(str);
+                    std::unique_ptr<wchar_t> str(toWideChar(*value));
+                    engine.setTitle(str.get());
                 }
                 break;
                 case 1:
@@ -446,9 +463,8 @@ namespace flint
 					else
 						printf(" ");
 					v8::String::Utf8Value str(args.GetIsolate(), args[i]);
-                    wchar_t* buffer = toWideChar(*str);
-					wprintf(buffer);
-                    free(buffer);
+                    std::unique_ptr<wchar_t> buffer(toWideChar(*str));
+					wprintf(buffer.get());
                 }
 				printf("\n");
 				fflush(stdout);
@@ -495,6 +511,7 @@ namespace flint
             v8::Eternal<v8::Context> m_context;
             std::unique_ptr<v8::Platform> m_pPlatform;
 			std::map<std::string, v8::Eternal<v8::Module>> Modules;
+            std::stack<std::wstring> m_currPath;
             v8::Eternal<v8::ObjectTemplate> m_elemTemplate;
             v8::Eternal<v8::Object> Application;
             v8::Eternal<v8::Function> ProcessFunc;
@@ -512,7 +529,7 @@ namespace flint
             delete m_pEnvironment;
 		}
 
-		bool Interface::initialize(const char* main)
+		bool Interface::initialize(const wchar_t* main)
 		{
             v8::Isolate* pIsolate = m_pEnvironment->m_pIsolate;
             v8::HandleScope scope(pIsolate);
@@ -532,9 +549,10 @@ namespace flint
                         v8::Local<v8::String> str = className->ToString(context).ToLocalChecked();
                         v8::String::Utf8Value pname(pIsolate, str);
                         const std::string name = *pname;
-                        const std::string smain = main;
+                        std::unique_ptr<char> wname(Environment::toUTF8(main));
+                        const std::string smain = wname.get();
                         const std::string code = (name == "default") ? "import defaultExport from '" + smain + "';\nexport let res=new defaultExport();" : "import {" + name + "} from '" + smain + "';\nexport let res=new " + name + "();";
-                        m_pEnvironment->load("", code.c_str());
+                        m_pEnvironment->load(L"", code.c_str());
                         return !m_pEnvironment->Application.IsEmpty();
                     }
                 }

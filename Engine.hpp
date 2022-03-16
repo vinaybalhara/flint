@@ -22,7 +22,6 @@ namespace flint
 		EngineParameters() : size(Size(600, 400)),
 				 			 title(L"Flint"),
 							 commandLine(0),
-							 main(0),
 							 state(EngineState::NORMAL)
 		{
 		}
@@ -31,7 +30,7 @@ namespace flint
 		std::wstring title;
 		EngineState state;
 		char* commandLine;
-		const char* main;
+		std::wstring main;
 	};
 
 	class Engine : protected IEngineEventListener

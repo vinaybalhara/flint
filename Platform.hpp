@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 namespace flint
 {
 	class IEngineEventListener;
@@ -22,5 +24,8 @@ namespace flint
 		void sleep(int ms);
 		void createConsole(const wchar_t* title);
 		void releaseConsole();
+		std::wstring getCWD();
+		std::wstring getFullPath(const wchar_t* path);
+		std::wstring getFileName(const wchar_t* path);
 	}
 }

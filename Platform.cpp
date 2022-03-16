@@ -2,11 +2,14 @@
 #include "EngineEventListener.hpp"
 #include <windows.h>
 #include <windowsx.h>
+#include <Shlwapi.h>
 #include <io.h>
 #include <gl/gl.h>
 #include <fcntl.h>
 #include <chrono>
 #include <iostream>
+
+#pragma comment (lib, "shlwapi.lib")
 
 namespace flint
 {
@@ -366,6 +369,32 @@ namespace flint
 			FreeConsole();
 		}
 
+		std::wstring getCWD()
+		{
+			std::wstring result;
+			wchar_t* buffer = _wgetcwd(NULL, 0);
+			if (buffer != NULL)
+			{
+				result = buffer;
+				free(buffer);
+			}
+			return result;
+		}
+
+		std::wstring getFullPath(const wchar_t* path)
+		{
+			wchar_t buffer[1024] = { 0 };
+			wchar_t* filename = 0;
+			GetFullPathName(path, 1024, buffer, &filename);
+			if (filename)
+				*filename = 0;
+			return buffer;
+		}
+
+		std::wstring getFileName(const wchar_t* path)
+		{
+			return PathFindFileName(path);
+		}
 	}
 
 }

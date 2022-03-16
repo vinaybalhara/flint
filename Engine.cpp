@@ -40,11 +40,14 @@ namespace flint
 				m_bDebug = options.has("--debug");
 				if (m_bDebug)
 					platform::createConsole(L"Flint Console");
-				if (params.main == 0 || params.main[0] == 0)
-					m_spInstance->m_params.main = options.get("--main");
+				if (params.main.empty())
+				{
+					const std::string option = options.get("--main");
+					m_spInstance->m_params.main = std::wstring(option.cbegin(), option.cend());
+				}
 			}
-			if(m_spInstance->m_params.main == 0 || m_spInstance->m_params.main[0] == 0)
-				m_spInstance->m_params.main = "main.js";
+			if(m_spInstance->m_params.main.empty())
+				m_spInstance->m_params.main = L"main.js";
 			return m_spInstance;
 		}
 		return nullptr;
@@ -66,7 +69,7 @@ namespace flint
 		{
 			m_pScriptInterface = new javascript::Interface(*this);
 			m_pRenderer = new Renderer();
-			if (m_pScriptInterface->initialize(m_params.main))
+			if (m_pScriptInterface->initialize(m_params.main.c_str()))
 			{
 				m_pWindow = platform::createWindow(this, m_params.size.width, m_params.size.height, m_params.title.c_str());
 				if (m_pWindow && platform::createOpenGLContext(m_pWindow))

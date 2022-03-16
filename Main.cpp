@@ -9,6 +9,7 @@ int WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR  lpCmdLine, int 
 {
 	flint::EngineParameters params;
 	params.commandLine = lpCmdLine;
+	params.main = L"Scripts\\main.js";
 	flint::Engine* pEngine = flint::Engine::Create(params);
 	if (pEngine->initialize())
 		pEngine->run();
